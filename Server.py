@@ -19,7 +19,7 @@ class Server:
         data = self.recv_raw(_sizeof(dtype))
         return int.from_bytes(data, byteorder='big')
 
-    def recv_img(self) -> cv2.Mat:
+    def recv_img(self):
         size = self.recv_int(np.uint64)
         data = self.recv_arr((size, ), dtype=np.uint8)
 
