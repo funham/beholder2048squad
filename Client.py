@@ -2,45 +2,54 @@ import socket
 import numpy as np
 import cv2
 
+from Server import ConnType
+
 
 class Client:
     def __init__(self, host, port):
         self.host = host
         self.port = port
-        sock = socket.socket()
-        sock.connect((host, port))
+        self.sock = socket.socket()
+        self.sock.connect((host, port))
 
         print(f'connected to {host}:{port}')
 
-        sock.close()
+        self.sock.close()
 
-    def send_raw(self, msg) -> None:
-        sock = socket.socket()
-        sock.connect((self.host, self.port))
-        sock.sendall(msg)
-        sock.close()
+    def send_raw(self, msg, connType: ConnType = ConnType.OC) -> None:
+        self.sock = self._getConn(connType)
+        self.sock.sendall(msg)
+        self._closeConn(connType)
 
-    def recv_raw(self, length=1024) -> bytes:
-        sock = socket.socket()
-        sock.connect((self.host, self.port))
-        data = sock.recv(length)
-        sock.close()
+    def recv_raw(self, length=1024, connType: ConnType = ConnType.OC) -> bytes:
+        self.sock = self._getConn(connType)
+        data = self.sock.recv(length)
+        self._closeConn(connType)
 
         return data
 
-    def recv_str(self) -> str:
-        return self.recv_raw().decode('utf-8', 'strict')
+    def recv_str(self, connType: ConnType = ConnType.OC) -> str:
+        return self.recv_raw(length=1024, connType=connType).decode('utf-8', 'strict')
 
-    def send_img(self, img, quality=90) -> None:
+    def send_img(self, img, quality=90, closeOnExit: bool = True) -> None:
         encode_param = (int(cv2.IMWRITE_JPEG_QUALITY), quality)
         res, data = cv2.imencode('.jpg', img, encode_param)
         data = data.tobytes()
         size = len(data)
-        self.send_raw(size.to_bytes(8, 'big'))
-        #print(f'sent size = {size}')
-        self.send_raw(data)
-        #print('sent compressed img')
-        # print(f'img_size={len(img_bytes)}')
+        self.send_raw(size.to_bytes(8, 'big'), ConnType.O)
+        self.send_raw(data, ConnType.N)
+
+    def _getConn(self, connType: ConnType) -> socket.socket:
+        if connType in (ConnType.O, ConnType.OC):
+            sock = socket.socket()
+            sock.connect((self.host, self.port))
+            return sock
+
+        return self.sock
+
+    def _closeConn(self, connType: ConnType) -> None:
+        if connType in (ConnType.C, ConnType.OC):
+            self.sock.close()
 
 
 if __name__ == '__main__':
@@ -57,9 +66,9 @@ if __name__ == '__main__':
         if cv2.waitKey(1) == ord('q'):
             break
 
-        client.send_img(frame)
+        client.send_img(frame, quality=90, closeOnExit=False)
 
-        command = client.recv_str()
+        command = client.recv_str(ConnType.C)
         print(command)
 
     cv2.destroyAllWindows()
