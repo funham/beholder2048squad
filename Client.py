@@ -14,13 +14,13 @@ class Client:
 
         sock.close()
 
-    def send(self, msg) -> None:
+    def send_raw(self, msg) -> None:
         sock = socket.socket()
         sock.connect((self.host, self.port))
         sock.sendall(msg)
         sock.close()
 
-    def recv(self, length=1024) -> bytes:
+    def recv_raw(self, length=1024) -> bytes:
         sock = socket.socket()
         sock.connect((self.host, self.port))
         data = sock.recv(length)
@@ -29,16 +29,16 @@ class Client:
         return data
 
     def recv_str(self) -> str:
-        return self.recv().decode('utf-8', 'strict')
+        return self.recv_raw().decode('utf-8', 'strict')
 
     def send_img(self, img, quality=90) -> None:
         encode_param = (int(cv2.IMWRITE_JPEG_QUALITY), quality)
         res, data = cv2.imencode('.jpg', img, encode_param)
         data = data.tobytes()
         size = len(data)
-        self.send(size.to_bytes(8, 'big'))
+        self.send_raw(size.to_bytes(8, 'big'))
         #print(f'sent size = {size}')
-        self.send(data)
+        self.send_raw(data)
         #print('sent compressed img')
         # print(f'img_size={len(img_bytes)}')
 
