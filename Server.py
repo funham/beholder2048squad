@@ -61,7 +61,7 @@ if __name__ == '__main__':
     while True:
         frame = serv.recv_img()
 
-        cv2.imshow('frame', frame)
+        cv2.imshow('recieved', frame)
 
         command = 's 90'
         serv.send_str(command)
