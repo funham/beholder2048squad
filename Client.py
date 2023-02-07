@@ -3,7 +3,7 @@ import numpy as np
 import cv2
 
 from Server import ConnType
-
+from functools import partialmethod
 
 class Client:
     def __init__(self, host, port):
@@ -50,6 +50,9 @@ class Client:
     def _closeConn(self, connType: ConnType) -> None:
         if connType in (ConnType.C, ConnType.OC):
             self.sock.close()
+
+    chat_img = partialmethod(send_img, closeOnExit=False)
+    chat_cmd = partialmethod(recv_str, connType=ConnType.C)
 
 
 if __name__ == '__main__':

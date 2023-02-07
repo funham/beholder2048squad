@@ -2,6 +2,7 @@ import socket
 import cv2
 import numpy as np
 from enum import Enum
+from functools import partialmethod
 
 
 class ConnType(Enum):
@@ -34,6 +35,7 @@ class Server:
             self._closeConn(ConnType.C)
 
         return cv2.imdecode(data, 1)
+    
 
     def recv_arr(self, shape: tuple, dtype=np.int64, connType: ConnType = ConnType.OC) -> np.ndarray:
         size = np.prod(shape)
@@ -70,6 +72,8 @@ class Server:
         if connType in (ConnType.C, ConnType.OC):
             self.conn.close()
 
+    chat_img = partialmethod(recv_img, closeOnExit=False)
+    chat_cmd = partialmethod(send_str, connType=ConnType.C)
 
 def _sizeof(dtype):
     return np.array([], dtype=dtype).itemsize
