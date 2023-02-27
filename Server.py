@@ -1,97 +1,83 @@
-import socket
 import cv2
+import socket
+import pickle
 import numpy as np
-from enum import Enum
-from functools import partialmethod
-
-
-class ConnType(Enum):
-    N = 0   # do Nothing
-    O = 1   # just Open
-    C = 2   # just Close
-    OC = 3  # Open & Close
+from typing import Iterator
 
 
 class Server:
-    def __init__(self, port):
-        self.port = port
-        self.sock = socket.socket()
-        self.sock.bind(('', port))
-        self.sock.listen()
-        self.conn, addr = self.sock.accept()
+    __conn: socket.socket | None = None
 
-        print(f'connected to {addr}')
+    __MAX_LENGTH = 65540
 
-        self.conn.close()
+    def __init__(self, udp_host: str, udp_port: int, tcp_host: str, tcp_port: int):
+        self.__udp_host = udp_host
+        self.__udp_port = udp_port
 
-    def recv_int(self, dtype, connType: ConnType = ConnType.OC) -> int:
-        data = self.recv_raw(_sizeof(dtype), connType)
-        return int.from_bytes(data, byteorder='big')
+        self.__tcp_host = tcp_host
+        self.__tcp_port = tcp_port
 
-    def recv_img(self, closeOnExit: bool):
-        size = self.recv_int(np.uint64, ConnType.O)
-        data = self.recv_arr((size, ), dtype=np.uint8, connType=ConnType.N)
-        if closeOnExit:
-            self._closeConn(ConnType.C)
+        self.__udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.__udp_sock.bind((self.__udp_host, self.__udp_port))
 
-        return cv2.imdecode(data, 1)
+        self.__tcp_sock = socket.socket(socket.AF_INET,  # Internet
+                                  socket.SOCK_STREAM)  # TCP
+
+        self.__tcp_sock.bind((self.__tcp_host, self.__tcp_port))
+        self.__tcp_sock.listen()
+
+    def __recv_packs(self, num_packs: int) -> Iterator[bytes]:
+        for _ in range(num_packs):
+            data, addr = self.__udp_sock.recvfrom(Server.__MAX_LENGTH)
+            yield data
+
+    def recv_img(self) -> cv2.Mat | None:
+        data, address = self.__udp_sock.recvfrom(Server.__MAX_LENGTH)
+        
+        try:
+            frame_info = pickle.loads(data)
+        except:
+            return None
+
+        if len(data) >= 100 or not frame_info:
+            return None
+
+        buffer = b''.join(self.__recv_packs(num_packs=frame_info["packs"]))
+
+        frame = np.frombuffer(buffer, dtype=np.uint8)
+        frame = frame.reshape(frame.shape[0], 1)
+        frame = cv2.imdecode(frame, cv2.IMREAD_COLOR)
+
+        return frame
     
+    def __tcp_reset(method):
+        def wrapper(self, *args, **kwargs):
+            self.__conn, (client_name, client_port) = self.__tcp_sock.accept()
+            ret = method(self, *args, **kwargs)
+            self.__conn.close()
 
-    def recv_arr(self, shape: tuple, dtype=np.int64, connType: ConnType = ConnType.OC) -> np.ndarray:
-        size = np.prod(shape)
-        data = self.recv_raw(size * _sizeof(dtype),
-                             connType=connType, safe=True)
-        arr = np.frombuffer(data, dtype=dtype)
+            return ret
+        
+        return wrapper
 
-        return arr.reshape(shape)
-
-    def recv_raw(self, size: int, connType: ConnType = ConnType.OC, *, safe: bool = False) -> bytes:
-        self.conn = self._getConn(connType)
-        data = self.conn.recv(size, socket.MSG_WAITALL if safe else 0)
-        self._closeConn(connType)
-
-        return data
-
-    def send_raw(self, data: bytes, connType: ConnType = ConnType.OC) -> None:
-        self.conn = self._getConn(connType)
-        self.conn.sendall(data)
-        self._closeConn(connType)
-
-    def send_str(self, string: str, connType: ConnType = ConnType.OC) -> None:
-        self.send_raw(string.encode(encoding='utf-8'), connType)
-
-    def _getConn(self, connType: ConnType) -> socket.socket:
-        if connType in (ConnType.O, ConnType.OC):
-            self.sock.listen()
-            conn, addr = self.sock.accept()
-            return conn
-
-        return self.conn
-
-    def _closeConn(self, connType: ConnType) -> None:
-        if connType in (ConnType.C, ConnType.OC):
-            self.conn.close()
-
-    chat_img = partialmethod(recv_img, closeOnExit=False)
-    chat_cmd = partialmethod(send_str, connType=ConnType.C)
-
-def _sizeof(dtype):
-    return np.array([], dtype=dtype).itemsize
+    @__tcp_reset
+    def send_msg(self, msg: str):
+        self.__conn.sendall(msg.encode('utf-8'))
 
 
-if __name__ == '__main__':
-
-    serv = Server(9090)
-
+if __name__ == "__main__":
+    server = Server(udp_host="0.0.0.0", udp_port=5000,
+                    tcp_host="192.168.0.12", tcp_port=5001)
+    
     while True:
-        frame = serv.recv_img(closeOnExit=False)
+        frame = server.recv_img()
+        frame = cv2.flip(frame, 1)
 
-        cv2.imshow('recieved', frame)
+        if frame is not None:
+            cv2.imshow("Stream", frame)
+            if cv2.waitKey(1) == 27:
+                break
 
-        command = 's 90'
-        serv.send_str(command, ConnType.C)
-
-        if cv2.waitKey(1) == ord('q'):
-            break
+        server.send_msg('kekw :3')
 
     cv2.destroyAllWindows()

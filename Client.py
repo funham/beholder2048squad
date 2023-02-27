@@ -1,77 +1,82 @@
-import socket
-import numpy as np
 import cv2
+import socket
+import math
+import pickle
 
-from Server import ConnType
-from functools import partialmethod
 
 class Client:
-    def __init__(self, host, port):
-        self.host = host
-        self.port = port
-        self.sock = socket.socket()
-        self.sock.connect((host, port))
+    __MAX_LENGTH = 65000
+    __tcp_sock: socket.socket
+    
+    def __init__(self, udp_host: str, udp_port: int, tcp_host: str, tcp_port: int):
+        self.__udp_host = udp_host
+        self.__udp_port = udp_port
+        self.__udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
-        print(f'connected to {host}:{port}')
+        self.__tcp_host = tcp_host
+        self.__tcp_port = tcp_port
 
-        self.sock.close()
+    def send_img(self, img: cv2.Mat):
+        retval, buffer = cv2.imencode(".jpg", img)
 
-    def send_raw(self, msg, connType: ConnType = ConnType.OC) -> None:
-        self.sock = self._getConn(connType)
-        self.sock.sendall(msg)
-        self._closeConn(connType)
+        if not retval:
+            raise ValueError("couldn't ecode image")
 
-    def recv_raw(self, length=1024, connType: ConnType = ConnType.OC) -> bytes:
-        self.sock = self._getConn(connType)
-        data = self.sock.recv(length)
-        self._closeConn(connType)
+        buffer = buffer.tobytes()
+        buffer_size = len(buffer)
+        num_of_packs = math.ceil(buffer_size / Client.__MAX_LENGTH)
 
-        return data
+        frame_info = {"packs": num_of_packs}
+        self.__udp_sock.sendto(pickle.dumps(frame_info), (self.__udp_host, self.__udp_port))
 
-    def recv_str(self, connType: ConnType = ConnType.OC) -> str:
-        return self.recv_raw(length=1024, connType=connType).decode('utf-8', 'strict')
+        left = 0
+        right = Client.__MAX_LENGTH
 
-    def send_img(self, img, quality=90, closeOnExit: bool = True) -> None:
-        encode_param = (int(cv2.IMWRITE_JPEG_QUALITY), quality)
-        res, data = cv2.imencode('.jpg', img, encode_param)
-        data = data.tobytes()
-        size = len(data)
-        self.send_raw(size.to_bytes(8, 'big'), ConnType.O)
-        self.send_raw(data, ConnType.N)
+        for _ in range(num_of_packs):
+            # truncate data to send
+            data = buffer[left:right]
+            left = right
+            right += Client.__MAX_LENGTH
 
-    def _getConn(self, connType: ConnType) -> socket.socket:
-        if connType in (ConnType.O, ConnType.OC):
-            sock = socket.socket()
-            sock.connect((self.host, self.port))
-            return sock
+            # send the frames accordingly
+            self.__udp_sock.sendto(data, (self.__udp_host, self.__udp_port))
+        
+    @staticmethod
+    def __tcp_reset(method):
+        def wrapper(self, *args, **kwargs):
+            self.__tcp_sock = socket.socket(socket.AF_INET,  # Internet
+                                      socket.SOCK_STREAM)  # TCP
+            self.__tcp_sock.connect((self.__tcp_host, self.__tcp_port))
+            ret = method(self, *args, **kwargs)
+            self.__tcp_sock.close()
 
-        return self.sock
+            return ret
 
-    def _closeConn(self, connType: ConnType) -> None:
-        if connType in (ConnType.C, ConnType.OC):
-            self.sock.close()
+        return wrapper
+    
+    @__tcp_reset
+    def recv_msg(self) -> str:
+        msg = self.__tcp_sock.recv(1024)
+        return msg.decode('utf-8')
 
-    chat_img = partialmethod(send_img, closeOnExit=False)
-    chat_cmd = partialmethod(recv_str, connType=ConnType.C)
 
-
-if __name__ == '__main__':
+if __name__ == "__main__":
+    client = Client(udp_host='192.168.0.12', udp_port=5000, 
+                    tcp_host='192.168.0.12', tcp_port=5001)
     cap = cv2.VideoCapture(0)
-    client = Client('192.168.95.46', 9090)
-    # client = Client('192.168.95.141', 9090)
 
     while True:
-        res, frame = cap.read()
-        frame = cv2.flip(frame, 1)
+        ret, img = cap.read()
 
-        cv2.imshow('sent', frame)
+        if not ret:
+            print('bruh')
+            continue
 
-        if cv2.waitKey(1) == ord('q'):
+        client.send_img(img)
+        
+        try:
+            msg = client.recv_msg()
+            print(f'recieved command: {msg}')
+        except ConnectionResetError:
+            print("Connection reset by host")
             break
-
-        client.send_img(frame, quality=90, closeOnExit=False)
-
-        command = client.recv_str(ConnType.C)
-        print(command)
-
-    cv2.destroyAllWindows()
